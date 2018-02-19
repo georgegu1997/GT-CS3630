@@ -1,3 +1,9 @@
+'''
+CS 3630 Lab 2
+Group Number: 65
+Students: Gu Qiao, Wang Guanzhi
+'''
+
 import pickle
 import sys
 import cozmo
