@@ -15,7 +15,23 @@ def motion_update(particles, odom):
         Returns: the list of particles represents belief \tilde{p}(x_{t} | u_{t})
                 after motion update
     """
+    # if the robot doesn't move, the particles shouldn't move either
+    if odom[0] == 0 and odom[1] == 0 and odom[2] == 0:
+        return particles
+    # The xyh of particles is in world frame
+    # The odom is in particle frame
+    # Transformation of x and y is needed
     motion_particles = []
+    for p in particles:
+        px, py, ph = p.xyh
+        # add noise in the particle frame
+        (nx, ny, dh) = add_odometry_noise(odom, ODOM_HEAD_SIGMA, ODOM_TRANS_SIGMA)
+        # from particle frame to world frame -> rotate back using the particle current heading angle
+        dx, dy = rotate_point(nx, ny, -ph)
+        # the heading rotation is the same in both frames.
+        np = Particle(px + dx, py + dy, ph + dh)
+        motion_particles.append(np)
+
     return motion_particles
 
 # ------------------------------------------------------------------------
@@ -44,6 +60,9 @@ def measurement_update(particles, measured_marker_list, grid):
                 after measurement update
     """
     measured_particles = []
+    for p in particles:
+        simulated_marker_list = p.read_markers(grid)
+
+
+    measured_particles = particles
     return measured_particles
-
-
