@@ -3,6 +3,9 @@ from particle import Particle
 from utils import *
 from setting import *
 
+# import nunmpy for np.random.choice
+import numpy as np
+
 
 def motion_update(particles, odom):
     """ Particle filter motion update
@@ -59,8 +62,19 @@ def measurement_update(particles, measured_marker_list, grid):
         Returns: the list of particles represents belief p(x_{t} | u_{t})
                 after measurement update
     """
+    # if not markers seen, no update
+    if len(measured_marker_list) <= 0:
+        return particles
+
+    # 2 lists are matched for (particle, weight) pairs
     measured_particles = []
+    weights = []
+
     for p in particles:
+        # particles within an obstacle or outside the map should have a weight of 0
+        if p.x > grid.width or p.x < 0  or p.y > grid.height or p.y < 0:
+            weights.append(0)
+            continue
         simulated_marker_list = p.read_markers(grid)
 
 
