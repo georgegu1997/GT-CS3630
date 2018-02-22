@@ -77,7 +77,7 @@ def measurement_update(particles, measured_marker_list, grid):
 
     for p in particles:
         # particles within an obstacle or outside the map should have a weight of 0
-        if p.x > grid.width or p.x < 0  or p.y > grid.height or p.y < 0:
+        if not grid.is_in(p.x, p.y) or not grid.is_free(p.x, p.y):
             weights.append(0)
             continue
 
