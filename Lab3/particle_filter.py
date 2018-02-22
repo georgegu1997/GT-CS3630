@@ -85,11 +85,12 @@ def measurement_update(particles, measured_marker_list, grid):
         prob = 1.0
         simulated_marker_list = p.read_markers(grid)
 
-        '''if no markers from simulation, then *do nothing* to this particle
-           It means give it an average probability
+        '''if no markers from simulation but there exist markers in measurement
+           Then drop this particle
         '''
         if len(simulated_marker_list) <= 0:
-            weights.append(1.0/PARTICLE_COUNT)
+            # weights.append(1.0/PARTICLE_COUNT)
+            weights.append(0)
             continue
 
         # pair the markers by distance
