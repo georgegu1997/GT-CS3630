@@ -53,7 +53,7 @@ def measurement_update(particles, measured_marker_list, grid):
 
                 * Note that the robot can only see markers which is in its camera field of view,
                 which is defined by ROBOT_CAMERA_FOV_DEG in setting.py
-				* Note that the robot can see mutliple markers at once, and may not see any one
+                * Note that the robot can see mutliple markers at once, and may not see any one
 
         grid -- grid world map, which contains the marker information,
                 see grid.py and CozGrid for definition
@@ -75,8 +75,45 @@ def measurement_update(particles, measured_marker_list, grid):
         if p.x > grid.width or p.x < 0  or p.y > grid.height or p.y < 0:
             weights.append(0)
             continue
+
+        prob = 1.0
         simulated_marker_list = p.read_markers(grid)
 
+        # # if the lengths of two marker lists are not consistent
+        # if len(simulated_marker_list) > len(measured_marker_list):
+        #     # the robot fails to detect some markers
+        #     prob *= DETECTION_FAILURE_RATE ** (len(simulated_marker_list) - len(measured_marker_list))
+        # elif len(simulated_marker_list) < len(measured_marker_list):
+        #     # the robot detects some spurious markers
+        #     prob *= SPURIOUS_DETECTION_RATE ** (len(measured_marker_list) - len(simulated_marker_list))
 
-    measured_particles = particles
+        # pair the markers by distance
+        for measured_marker in measured_marker_list:
+            min_dist = float('Inf')
+            candidate_pairing = None
+
+            for simulated_marker in simulated_marker_list:
+                dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
+                # update minimum distance and candidate pairing
+                if dist < min_dist:
+                    candidate_pairing = simulated_marker
+                    min_dist = dist
+
+            if candidate_pairing != None:
+                diff_angle = diff_heading_deg(measured_marker[2], simulated_marker[2])
+                prob *= np.exp(-(min_dist**2)/(2*MARKER_TRANS_SIGMA**2)-(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
+                # remove the marker in simulated_marker_list to avoid double pairing
+                simulated_marker_list.remove(candidate_pairing)
+
+        weights.append(prob)
+
+    # normalize weights
+    weights = np.divide(weights, np.sum(weights))
+
+    # resample
+    measured_particles = np.random.choice(particles, size = len(particles), replace = True, p = weights)
+
+    # maintain some small percentage of random samples
+    measured_particles = np.ndarray.tolist(measured_particles) + Particle.create_random(100, grid)
+
     return measured_particles
