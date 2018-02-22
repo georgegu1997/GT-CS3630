@@ -22,8 +22,8 @@ ROBOT_CAMERA_FOV_DEG = 45   # Robot camera FOV in degree
 ## Feel free to modify the values for debugging
 
 # Clean detection
-# DETECTION_FAILURE_RATE = 0.
-# SPURIOUS_DETECTION_RATE = 0.
+DETECTION_FAILURE_RATE = 0.
+SPURIOUS_DETECTION_RATE = 0.
 # # noisy detection
-DETECTION_FAILURE_RATE = 0.1
-SPURIOUS_DETECTION_RATE = 0.1
+# DETECTION_FAILURE_RATE = 0.1
+# SPURIOUS_DETECTION_RATE = 0.1

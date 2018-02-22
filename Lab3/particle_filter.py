@@ -8,6 +8,7 @@ import numpy as np
 
 # constants
 RANDOM_PARTICLE_RATE = 0.03
+MISMATECH_PENALTY = 0.5
 
 def motion_update(particles, odom):
     """ Particle filter motion update
@@ -123,13 +124,8 @@ def measurement_update(particles, measured_marker_list, grid):
 
             prob *= max_prob
 
-        # if the lengths of two marker lists are not consistent
-        # if len(simulated_marker_list) > len(measured_marker_list):
-        #     # the robot fails to detect some markers
-        #     prob *= DETECTION_FAILURE_RATE ** (len(simulated_marker_list) - len(measured_marker_list))
-        # elif len(simulated_marker_list) < len(measured_marker_list):
-        #     # the robot detects some spurious markers
-        #     prob *= SPURIOUS_DETECTION_RATE ** (len(measured_marker_list) - len(simulated_marker_list))
+        # Add mismatech penalty
+        prob *= MISMATECH_PENALTY ** abs(len(simulated_marker_list) - len(measured_marker_list))
 
         weights.append(prob)
 
