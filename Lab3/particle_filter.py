@@ -30,7 +30,12 @@ def motion_update(particles, odom):
         # add noise in the particle frame
         (nx, ny, dh) = add_odometry_noise(odom, ODOM_HEAD_SIGMA, ODOM_TRANS_SIGMA)
         # from particle frame to world frame -> rotate back using the particle current heading angle
-        dx, dy = rotate_point(nx, ny, -ph)
+        '''Note that the rotate_point() function is calculating the projection of a
+           vector in the frame that is rotated heading_deg CCW onto the original
+           frame. So we need to directly use ph here
+        '''
+        dx, dy = rotate_point(nx, ny, ph)
+
         # the heading rotation is the same in both frames.
         np = Particle(px + dx, py + dy, ph + dh)
         motion_particles.append(np)
@@ -62,6 +67,7 @@ def measurement_update(particles, measured_marker_list, grid):
         Returns: the list of particles represents belief p(x_{t} | u_{t})
                 after measurement update
     """
+
     # if not markers seen, no update
     if len(measured_marker_list) <= 0:
         return particles
@@ -79,39 +85,36 @@ def measurement_update(particles, measured_marker_list, grid):
         prob = 1.0
         simulated_marker_list = p.read_markers(grid)
 
-        # # if the lengths of two marker lists are not consistent
-        # if len(simulated_marker_list) > len(measured_marker_list):
-        #     # the robot fails to detect some markers
-        #     prob *= DETECTION_FAILURE_RATE ** (len(simulated_marker_list) - len(measured_marker_list))
-        # elif len(simulated_marker_list) < len(measured_marker_list):
-        #     # the robot detects some spurious markers
-        #     prob *= SPURIOUS_DETECTION_RATE ** (len(measured_marker_list) - len(simulated_marker_list))
+        '''if no markers from simulation, then *do nothing* to this particle
+           It means give it an average probability
+        '''
+        if len(simulated_marker_list) <= 0:
+            weights.append(1.0/PARTICLE_COUNT)
+            continue
 
         # pair the markers by distance
+        '''The matching of the pair should consider both distance and angle
+           thus directly calculate the probability when pairing and use the max one.
+        '''
         for measured_marker in measured_marker_list:
-            min_dist = float('Inf')
-            candidate_pairing = None
+            max_prob = 0.0
 
             for simulated_marker in simulated_marker_list:
-                dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
-                # update minimum distance and candidate pairing
-                if dist < min_dist:
-                    candidate_pairing = simulated_marker
-                    min_dist = dist
-
-            if candidate_pairing != None:
+                diff_dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
                 diff_angle = diff_heading_deg(measured_marker[2], simulated_marker[2])
-                prob *= np.exp(-(min_dist**2)/(2*MARKER_TRANS_SIGMA**2)-(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
-                # remove the marker in simulated_marker_list to avoid double pairing
-                simulated_marker_list.remove(candidate_pairing)
+                this_prob = np.exp(-(diff_dist**2)/(2*MARKER_TRANS_SIGMA**2)
+                                   -(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
+                if this_prob > max_prob:
+                    max_prob = this_prob
+            prob *= max_prob
 
         weights.append(prob)
 
     # normalize weights
     weights = np.divide(weights, np.sum(weights))
 
-    # resample
-    measured_particles = np.random.choice(particles, size = len(particles), replace = True, p = weights)
+    # resample *PARTICLE_COUNT* number of particles
+    measured_particles = np.random.choice(particles, size = PARTICLE_COUNT, replace = True, p = weights)
 
     # maintain some small percentage of random samples
     measured_particles = np.ndarray.tolist(measured_particles) + Particle.create_random(100, grid)
