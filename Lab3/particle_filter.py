@@ -106,7 +106,8 @@ def measurement_update(particles, measured_marker_list, grid):
                 break
 
             for simulated_marker in simulated_marker_list:
-                diff_dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
+                diff_dist = math.sqrt(measured_marker[0]**2 + measured_marker[1]**2) - math.sqrt(simulated_marker[0]**2 + simulated_marker[1]**2)
+                # diff_dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
                 diff_angle = diff_heading_deg(measured_marker[2], simulated_marker[2])
                 this_prob = np.exp(-(diff_dist**2)/(2*MARKER_TRANS_SIGMA**2)
                                    -(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
