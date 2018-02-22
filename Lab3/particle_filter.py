@@ -6,7 +6,6 @@ from setting import *
 # import nunmpy for np.random.choice
 import numpy as np
 
-
 def motion_update(particles, odom):
     """ Particle filter motion update
 
@@ -91,6 +90,7 @@ def measurement_update(particles, measured_marker_list, grid):
         if len(simulated_marker_list) <= 0:
             # weights.append(1.0/PARTICLE_COUNT)
             weights.append(0)
+            # weights.append(SPURIOUS_DETECTION_RATE ** (len(measured_marker_list)))
             continue
 
         # pair the markers by distance
@@ -98,7 +98,12 @@ def measurement_update(particles, measured_marker_list, grid):
            thus directly calculate the probability when pairing and use the max one.
         '''
         for measured_marker in measured_marker_list:
-            max_prob = 0.0
+            max_prob = -0.1
+            best_pair = None
+
+            # the particle detects less markers than the robot
+            if len(simulated_marker_list) <= 0:
+                break
 
             for simulated_marker in simulated_marker_list:
                 diff_dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
@@ -107,7 +112,20 @@ def measurement_update(particles, measured_marker_list, grid):
                                    -(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
                 if this_prob > max_prob:
                     max_prob = this_prob
+                    best_pair = simulated_marker
+
+            if best_pair != None:
+                simulated_marker_list.remove(best_pair)
+
             prob *= max_prob
+
+        # if the lengths of two marker lists are not consistent
+        # if len(simulated_marker_list) > len(measured_marker_list):
+        #     # the robot fails to detect some markers
+        #     prob *= DETECTION_FAILURE_RATE ** (len(simulated_marker_list) - len(measured_marker_list))
+        # elif len(simulated_marker_list) < len(measured_marker_list):
+        #     # the robot detects some spurious markers
+        #     prob *= SPURIOUS_DETECTION_RATE ** (len(measured_marker_list) - len(simulated_marker_list))
 
         weights.append(prob)
 
@@ -115,9 +133,9 @@ def measurement_update(particles, measured_marker_list, grid):
     weights = np.divide(weights, np.sum(weights))
 
     # resample *PARTICLE_COUNT* number of particles
-    measured_particles = np.random.choice(particles, size = PARTICLE_COUNT, replace = True, p = weights)
+    measured_particles = np.random.choice(particles, size = int(PARTICLE_COUNT*0.9), replace = True, p = weights)
 
     # maintain some small percentage of random samples
-    measured_particles = np.ndarray.tolist(measured_particles) + Particle.create_random(100, grid)
+    measured_particles = np.ndarray.tolist(measured_particles) + Particle.create_random(PARTICLE_COUNT-int(PARTICLE_COUNT*0.9), grid)
 
     return measured_particles
