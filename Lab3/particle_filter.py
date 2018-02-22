@@ -6,6 +6,9 @@ from setting import *
 # import nunmpy for np.random.choice
 import numpy as np
 
+# constants
+RANDOM_PARTICLE_RATE = 0.03
+
 def motion_update(particles, odom):
     """ Particle filter motion update
 
@@ -134,9 +137,14 @@ def measurement_update(particles, measured_marker_list, grid):
     weights = np.divide(weights, np.sum(weights))
 
     # resample *PARTICLE_COUNT* number of particles
-    measured_particles = np.random.choice(particles, size = int(PARTICLE_COUNT*0.9), replace = True, p = weights)
+    measured_particles = np.random.choice(
+                            particles,
+                            size = PARTICLE_COUNT - int(PARTICLE_COUNT*RANDOM_PARTICLE_RATE),
+                            replace = True,
+                            p = weights)
 
     # maintain some small percentage of random samples
-    measured_particles = np.ndarray.tolist(measured_particles) + Particle.create_random(PARTICLE_COUNT-int(PARTICLE_COUNT*0.9), grid)
+    measured_particles = np.ndarray.tolist(measured_particles) \
+                            + Particle.create_random(int(PARTICLE_COUNT*RANDOM_PARTICLE_RATE), grid)
 
     return measured_particles
