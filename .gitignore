@@ -1,0 +1,6 @@
+*.zip
+cozmo_sdk_examples_1.2.1
+*.bmp
+.DS_Store
+*.pyc
+__pycache__
