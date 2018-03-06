@@ -140,6 +140,60 @@ async def run(robot: cozmo.robot.Robot):
 
     # YOUR CODE HERE
 
+    while True:
+        # Get the current pose
+        curr_pose = None
+        pass
+
+        # Obtain odometry information
+        odom = compute_odometry(curr_pose, cvt_inch=True)
+
+        # Detect whether the robot is in goal
+        if odom[0] <= 0.1 and odom[1] <= 0.1 and odom[2] <= 10:
+            continue
+
+        # Detect whether the robot is picked up (kidnapped)
+        kidnapped = False
+        pass
+        if kidnapped == True:
+            # Reset the last pose
+            last_pose = cozmo.util.Pose(0,0,0,angle_z=cozmo.util.Angle(degrees=0))
+
+            # Reset particle filter to a uniform distribution
+            pf.particles = Particle.create_random(PARTICLE_COUNT, grid)
+
+            # Have the robot act unhappy when we pick it up for kidnapping
+            pass
+
+            continue
+
+        # Obtain list of currently seen markers and their poses
+        marker_list = await marker_processing(robot, camera_settings)
+
+        # Update the last pose
+        last_pose = curr_pose
+
+        # Update the particle filter using the above information
+        (m_x, m_y, m_h, m_confident) = pf.update(odom, marker_list)
+
+        if m_confident == False:
+            # the localization has not converged -- global localization problem
+
+            # Have the robot actively look around
+            pass
+
+        else:
+            # the localization has converged -- position tracking problem
+
+            # Have the robot drive to the goal
+            grid_distance = (m_x, m_y, goal[0], goal[1])
+            
+
+            pass
+
+            # Have the robot play a happy animation, then stand still
+            pass
+
     ###################
 
 class CozmoThread(threading.Thread):
