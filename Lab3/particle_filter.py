@@ -1,3 +1,10 @@
+'''
+CS 3630 lab 4
+Group number: 65
+Group member: Qiao GU, Guanzhi WANG
+'''
+
+
 from grid import *
 from particle import Particle
 from utils import *
