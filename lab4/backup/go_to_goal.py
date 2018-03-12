@@ -15,7 +15,6 @@ import threading
 import time
 import sys
 import asyncio
-from PIL import Image
 
 from markers import detect, annotator
 
@@ -56,7 +55,7 @@ goal = (6,10,0)
 # map
 Map_filename = "map_arena.json"
 grid = CozGrid(Map_filename)
-gui = GUIWindow(grid, show_camera=True)
+gui = GUIWindow(grid)
 pf = ParticleFilter(grid)
 
 def compute_odometry(curr_pose, cvt_inch=True):
@@ -83,21 +82,19 @@ def compute_odometry(curr_pose, cvt_inch=True):
     return (dx, dy, diff_heading_deg(curr_h, last_h))
 
 
-async def marker_processing(robot, camera_settings, show_diagnostic_image=False):
+async def marker_processing(robot, camera_settings):
     '''
     Obtain the visible markers from the current frame from Cozmo's camera.
     Since this is an async function, it must be called using await, for example:
 
-        markers, camera_image = await marker_processing(robot, camera_settings, show_diagnostic_image=False)
+        markers = await marker_processing(robot, camera_settings)
 
     Input:
         - robot: cozmo.robot.Robot object
         - camera_settings: 3x3 matrix representing the camera calibration settings
-        - show_diagnostic_image: if True, shows what the marker detector sees after processing
     Returns:
         - a list of detected markers, each being a 3-tuple (rx, ry, rh)
           (as expected by the particle filter's measurement update)
-        - a PIL Image of what Cozmo's camera sees with marker annotations
     '''
 
     global grid
@@ -110,23 +107,13 @@ async def marker_processing(robot, camera_settings, show_diagnostic_image=False)
     image = color.rgb2gray(image)
 
     # Detect the markers
-    markers, diag = detect.detect_markers(image, camera_settings, include_diagnostics=True)
+    markers = detect.detect_markers(image, camera_settings)
 
     # Measured marker list for the particle filter, scaled by the grid scale
     marker_list = [marker['xyh'] for marker in markers]
     marker_list = [(x/grid.scale, y/grid.scale, h) for x,y,h in marker_list]
 
-    # Annotate the camera image with the markers
-    if not show_diagnostic_image:
-        annotated_image = image_event.image.resize((image.shape[1] * 2, image.shape[0] * 2))
-        annotator.annotate_markers(annotated_image, markers, scale=2)
-    else:
-        diag_image = color.gray2rgb(diag['filtered_image'])
-        diag_image = Image.fromarray(np.uint8(diag_image * 255)).resize((image.shape[1] * 2, image.shape[0] * 2))
-        annotator.annotate_markers(diag_image, markers, scale=2)
-        annotated_image = diag_image
-
-    return marker_list, annotated_image
+    return marker_list
 
 
 async def run(robot: cozmo.robot.Robot):
@@ -154,33 +141,40 @@ async def run(robot: cozmo.robot.Robot):
     # YOUR CODE HERE
 
     while True:
-        # use the flag_odom_init to indicate whether it is kidnapped
-        if flag_odom_init == False:
+        # Get the current pose
+        curr_pose = None
+        pass
+
+        # Obtain odometry information
+        odom = compute_odometry(curr_pose, cvt_inch=True)
+
+        # Detect whether the robot is in goal
+        if odom[0] <= 0.1 and odom[1] <= 0.1 and odom[2] <= 10:
+            continue
+
+        # Detect whether the robot is picked up (kidnapped)
+        kidnapped = False
+        pass
+        if kidnapped == True:
             # Reset the last pose
             last_pose = cozmo.util.Pose(0,0,0,angle_z=cozmo.util.Angle(degrees=0))
 
             # Reset particle filter to a uniform distribution
             pf.particles = Particle.create_random(PARTICLE_COUNT, grid)
 
-            # TODO: Have the robot act unhappy when we pick it up for kidnapping
+            # Have the robot act unhappy when we pick it up for kidnapping
             pass
 
-            flag_odom_init = True
-
-        # Get the current pose
-        curr_pose = robot.pose
-
-        # Obtain odometry information
-        odom = compute_odometry(curr_pose, cvt_inch=True)
-        last_pose = curr_pose
+            continue
 
         # Obtain list of currently seen markers and their poses
         marker_list = await marker_processing(robot, camera_settings)
 
+        # Update the last pose
+        last_pose = curr_pose
+
         # Update the particle filter using the above information
         (m_x, m_y, m_h, m_confident) = pf.update(odom, marker_list)
-
-
 
         if m_confident == False:
             # the localization has not converged -- global localization problem
@@ -189,20 +183,16 @@ async def run(robot: cozmo.robot.Robot):
             pass
 
         else:
-            # Detect whether the robot is in goal
-            if odom[0] - goal[0] <= 0.1 and odom[1] - goal[1] <= 0.1 and odom[2] - goal[2] <= 5:
-                # Have the robot play a happy animation, then stand still
-                pass
-                continue
-
             # the localization has converged -- position tracking problem
 
             # Have the robot drive to the goal
             grid_distance = (m_x, m_y, goal[0], goal[1])
 
+
             pass
 
-
+            # Have the robot play a happy animation, then stand still
+            pass
 
     ###################
 

@@ -7,8 +7,6 @@ random.seed(RANDOM_SEED)
 import copy
 import math
 
-from PIL import ImageTk
-
 from grid import *
 from particle import Particle
 from utils import *
@@ -17,7 +15,7 @@ from utils import *
 
 # GUI class
 class GUIWindow():
-    def __init__(self, grid, show_camera=False):
+    def __init__(self, grid):
         self.width = grid.width
         self.height = grid.height
         self.update_cnt = 0
@@ -33,9 +31,6 @@ class GUIWindow():
 
         self.particles = []
         self.robot = None
-
-        self.show_camera = show_camera
-        self.camera_image = None
 
         print("Occupied: ")
         print(self.occupied)
@@ -66,11 +61,6 @@ class GUIWindow():
             c1x, c1y = rotate_point(0.2, -0.5, marker_h)
             c2x, c2y = rotate_point(0, 0.5, marker_h)
             self.colorRectangle((marker_x+c1x, marker_y+c1y), (marker_x+c2x, marker_y+c2y), '#00FFFF')
-
-    def drawCameraImage(self):
-        if self.camera_image:
-            self.camera_canvas.image = ImageTk.PhotoImage(self.camera_image)
-            self.camera_canvas.create_image(0, 0, anchor=NW, image=self.camera_canvas.image)
 
     def weight_to_color(self, weight):
         return "#%02x00%02x" % (int(weight * 255), int((1 - weight) * 255))
@@ -115,9 +105,6 @@ class GUIWindow():
         self.drawGrid()
         self.drawOccubpied()
         self.drawMarkers()
-
-        if self.show_camera:
-            self.drawCameraImage()
 
     """
     plot utils
@@ -181,11 +168,6 @@ class GUIWindow():
         self.robot = copy.deepcopy(robot)
         self.lock.release()
 
-    def show_camera_image(self, image):
-        self.lock.acquire()
-        self.camera_image = image.resize((self.grid.width * self.grid.scale, self.grid.height * self.grid.scale))
-        self.lock.release()
-
     def setupdate(self):
         self.updateflag = True
 
@@ -196,7 +178,7 @@ class GUIWindow():
         self._show_mean(self.mean_x, self.mean_y, self.mean_heading, self.mean_confident)
         if self.robot != None:
             self._show_robot(self.robot)
-            # time.sleep(0.05)
+            time.sleep(0.05)
         self.updated.clear()
         self.lock.release()
         # self.updateflag = False
@@ -207,12 +189,7 @@ class GUIWindow():
         master.wm_title("Particle Filter: Grey/Green - estimated, Red - ground truth")
 
         self.canvas = Canvas(master, width = self.grid.width * self.grid.scale, height = self.grid.height * self.grid.scale, bd = 0, bg = '#FFFFFF')
-        self.canvas.pack(side=LEFT)
-
-        if self.show_camera:
-            self.camera_canvas = Canvas(master, width=self.grid.width*self.grid.scale, height=self.grid.height*self.grid.scale, bd=0, bg='#ffffff')
-            self.camera_canvas.pack(side=LEFT)
-            self.drawCameraImage()
+        self.canvas.pack()
 
         self.drawGrid()
         self.drawOccubpied()
