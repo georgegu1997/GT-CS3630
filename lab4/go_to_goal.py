@@ -69,6 +69,8 @@ PI = 3.14159
 POSITION_TOL = 1.5
 HEADING_TOL = 12.0
 
+sign = lambda x: (1, -1)[x < 0]
+
 def compute_odometry(curr_pose, cvt_inch=True):
     '''
     Compute the odometry given the current pose of the robot (use robot.pose)
@@ -244,10 +246,12 @@ async def run(robot: cozmo.robot.Robot):
             if ((time.time() - start) // 1) % 8 < 3 or len(marker_list) <= 0:
                 await robot.drive_wheels(15.0, -15,0)
             elif len(marker_list) > 0:
-                if (marker_list[0][0] > 10):
-                    await robot.drive_wheels(20.0, 20,0)
-                if (marker_list[0][0] < 7):
-                    await robot.drive_wheels(-20.0, -20,0)
+                if (marker_list[0][0] > 12):
+                    await robot.drive_wheels(40.0, 40,0)
+                if (marker_list[0][0] < 8):
+                    await robot.drive_wheels(-40.0, -40,0)
+            else:
+                await robot.drive_wheels(0.0, 0,0)
 
             # if ((time.time() - start) // 1) % 8 == 0 or len(marker_list) <= 0:
             #     await robot.turn_in_place(degrees(random.randint(-60, 60))).wait_for_completed()
@@ -264,72 +268,74 @@ async def run(robot: cozmo.robot.Robot):
             #     await robot.drive_wheels(-30.0, 30,0)
 
         else:
-            # await robot.drive_wheels(0.0, 0,0)
+            await robot.drive_wheels(0.0, 0,0)
 
-            # dx = goal[0] - m_x;
-            # dy = goal[1] - m_y;
-            # target_heading = atan2(dy, dx) * 180.0 / PI
+            dx = goal[0] - m_x;
+            dy = goal[1] - m_y;
+            target_heading = atan2(dy, dx) * 180.0 / PI
+
+            dh_deg = diff_heading_deg(target_heading, m_h)
+            dist = grid_distance(m_x, m_y, goal[0], goal[1])
+            dh_deg_2 = diff_heading_deg(goal[2], target_heading)
+
+            await robot.turn_in_place(degrees(dh_deg)).wait_for_completed()
+            await robot.drive_straight(distance_mm(dist * grid.scale + 1), speed_mmps(50)).wait_for_completed()
+            await robot.turn_in_place(degrees(dh_deg_2 - sign(dh_deg_2) * 10 )).wait_for_completed()
+            await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabHappy).wait_for_completed()
+
+
+            arrived = True
+
+            # # Detect whether the robot is in goal
+            # diff_x = abs(m_x - goal[0])
+            # diff_y = abs(m_y - goal[1])
+            # diff_h = abs(m_h - goal[2])
             #
-            # dh_deg = diff_heading_deg(target_heading, m_h)
-            # dist = grid_distance(m_x, m_y, goal[0], goal[1])
-            # dh_deg_2 = diff_heading_deg(goal[2], target_heading)
+            # # if arrived at the goal state (postion and heading)
+            # if diff_x <= POSITION_TOL and diff_y <= POSITION_TOL and diff_h <= HEADING_TOL:
+            #     print("arrived at the goal state (postion and heading)")
+            #     # Have the robot play a happy animation, then stand still
+            #     await robot.drive_wheels(0.0, 0,0)
+            #     await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabHappy).wait_for_completed()
+            #     arrived = True
+            #     continue
             #
-            # await robot.turn_in_place(degrees(dh_deg)).wait_for_completed()
-            # await robot.drive_straight(distance_mm(dist * grid.scale), speed_mmps(50)).wait_for_completed()
-            # await robot.turn_in_place(degrees(dh_deg_2)).wait_for_completed()
+            # # If not at the goal position
+            # elif diff_x > POSITION_TOL or diff_y > POSITION_TOL:
+            #     print("not at the goal position")
+            #     # the localization has converged -- position tracking problem
             #
-            # arrived = True
-
-            # Detect whether the robot is in goal
-            diff_x = abs(m_x - goal[0])
-            diff_y = abs(m_y - goal[1])
-            diff_h = abs(m_h - goal[2])
-
-            # if arrived at the goal state (postion and heading)
-            if diff_x <= POSITION_TOL and diff_y <= POSITION_TOL and diff_h <= HEADING_TOL:
-                print("arrived at the goal state (postion and heading)")
-                # Have the robot play a happy animation, then stand still
-                await robot.drive_wheels(0.0, 0,0)
-                await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabHappy).wait_for_completed()
-                arrived = True
-                continue
-
-            # If not at the goal position
-            elif diff_x > POSITION_TOL or diff_y > POSITION_TOL:
-                print("not at the goal position")
-                # the localization has converged -- position tracking problem
-
-                # calculate the difference in position and heading
-                dx = goal[0] - m_x;
-                dy = goal[1] - m_y;
-                target_heading = atan2(dy, dx) * 180.0 / PI
-                dh_deg = diff_heading_deg(target_heading, m_h)
-                dist = grid_distance(m_x, m_y, goal[0], goal[1])
-
-                # first adjust the heading towards the goal
-                angular_speed = min(20, abs(dh_deg / 3))
-                # angular_speed = 10
-                speed = 40
-                if dh_deg > HEADING_TOL:
-                    await robot.drive_wheels(-angular_speed, angular_speed)
-                elif dh_deg < - HEADING_TOL:
-                    await robot.drive_wheels(angular_speed, -angular_speed)
-                # then drive to the goal
-                else:
-                    await robot.drive_wheels(50.0, 50,0)
-
-            # if at the goal position, then adjust the heading
-            else:
-                await robot.drive_wheels(0.0, 0,0)
-                print("at the goal position, then adjust the heading")
-                dh_deg = diff_heading_deg(goal[2], m_h)
-                angular_speed = min(20, abs(dh_deg / 3))
-                if dh_deg > HEADING_TOL:
-                    await robot.drive_wheels(-angular_speed, angular_speed)
-                elif dh_deg < - HEADING_TOL:
-                    await robot.drive_wheels(angular_speed, -angular_speed)
-                else:
-                    await robot.drive_wheels(0.0, 0,0)
+            #     # calculate the difference in position and heading
+            #     dx = goal[0] - m_x;
+            #     dy = goal[1] - m_y;
+            #     target_heading = atan2(dy, dx) * 180.0 / PI
+            #     dh_deg = diff_heading_deg(target_heading, m_h)
+            #     dist = grid_distance(m_x, m_y, goal[0], goal[1])
+            #
+            #     # first adjust the heading towards the goal
+            #     angular_speed = min(30, abs(dh_deg / 3))
+            #     # angular_speed = 10
+            #     speed = 40
+            #     if dh_deg > HEADING_TOL:
+            #         await robot.drive_wheels(-angular_speed, angular_speed)
+            #     elif dh_deg < - HEADING_TOL:
+            #         await robot.drive_wheels(angular_speed, -angular_speed)
+            #     # then drive to the goal
+            #     else:
+            #         await robot.drive_wheels(50.0, 50,0)
+            #
+            # # if at the goal position, then adjust the heading
+            # else:
+            #     await robot.drive_wheels(0.0, 0,0)
+            #     print("at the goal position, then adjust the heading")
+            #     dh_deg = diff_heading_deg(goal[2], m_h)
+            #     angular_speed = min(30, abs(dh_deg / 3))
+            #     if dh_deg > HEADING_TOL:
+            #         await robot.drive_wheels(-angular_speed, angular_speed)
+            #     elif dh_deg < - HEADING_TOL:
+            #         await robot.drive_wheels(angular_speed, -angular_speed)
+            #     else:
+            #         await robot.drive_wheels(0.0, 0,0)
 
 
     ###################
