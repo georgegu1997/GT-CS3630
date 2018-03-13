@@ -1,11 +1,11 @@
 ## If you run into an "[NSApplication _setup] unrecognized selector" problem on macOS,
 ## try uncommenting the following snippet
 
-# try:
-#     import matplotlib
-#     matplotlib.use('TkAgg')
-# except ImportError:
-#     pass
+try:
+    import matplotlib
+    matplotlib.use('TkAgg')
+except ImportError:
+    pass
 
 from skimage import color
 import cozmo
@@ -240,6 +240,8 @@ async def run(robot: cozmo.robot.Robot):
             converged = False
             convergence_score = 0
 
+        await robot.drive_wheels(15.0/(1+convergence_score/10), -15.0/(1+convergence_score/10))
+
         if not converged:
             # the localization has not converged -- global localization problem
             # Have the robot actively look around (spin in place)
@@ -252,6 +254,8 @@ async def run(robot: cozmo.robot.Robot):
                     await robot.drive_wheels(-40.0, -40,0)
             else:
                 await robot.drive_wheels(0.0, 0,0)
+
+            # await robot.drive_wheels(15.0, -15.0)
 
             # if ((time.time() - start) // 1) % 8 == 0 or len(marker_list) <= 0:
             #     await robot.turn_in_place(degrees(random.randint(-60, 60))).wait_for_completed()
@@ -278,9 +282,12 @@ async def run(robot: cozmo.robot.Robot):
             dist = grid_distance(m_x, m_y, goal[0], goal[1])
             dh_deg_2 = diff_heading_deg(goal[2], target_heading)
 
-            await robot.turn_in_place(degrees(dh_deg)).wait_for_completed()
-            await robot.drive_straight(distance_mm(dist * grid.scale + 1), speed_mmps(50)).wait_for_completed()
-            await robot.turn_in_place(degrees(dh_deg_2 - sign(dh_deg_2) * 10 )).wait_for_completed()
+            # await robot.turn_in_place(degrees(dh_deg)).wait_for_completed()
+            await robot.turn_in_place(degrees(int(dh_deg * 0.95))).wait_for_completed()
+            # await robot.drive_straight(distance_mm(dist * grid.scale + 1), speed_mmps(50)).wait_for_completed()
+            await robot.drive_straight(distance_mm(dist * grid.scale * 0.95), speed_mmps(50)).wait_for_completed()
+            # await robot.turn_in_place(degrees(dh_deg_2 - sign(dh_deg_2) * 10 )).wait_for_completed()
+            await robot.turn_in_place(degrees(int(dh_deg_2 * 0.975))).wait_for_completed()
             await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabHappy).wait_for_completed()
 
 
