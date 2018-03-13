@@ -9,6 +9,7 @@
 
 from skimage import color
 import cozmo
+from cozmo.util import degrees, distance_mm, speed_mmps
 import numpy as np
 from numpy.linalg import inv
 import threading
@@ -16,6 +17,10 @@ import time
 import sys
 import asyncio
 from PIL import Image
+
+from math import atan2
+import random
+
 
 from markers import detect, annotator
 
@@ -58,6 +63,11 @@ Map_filename = "map_arena.json"
 grid = CozGrid(Map_filename)
 gui = GUIWindow(grid, show_camera=True)
 pf = ParticleFilter(grid)
+
+# Constant
+PI = 3.14159
+POSITION_TOL = 1.5
+HEADING_TOL = 12.0
 
 def compute_odometry(curr_pose, cvt_inch=True):
     '''
@@ -152,8 +162,33 @@ async def run(robot: cozmo.robot.Robot):
     ###################
 
     # YOUR CODE HERE
+    start = time.time()
+    converged = False
+    convergence_score = 0
+    arrived = False
 
     while True:
+        if arrived:
+            while not robot.is_picked_up:
+                await robot.drive_straight(distance_mm(0), speed_mmps(0)).wait_for_completed()
+
+		# Detect whether it is kidnapped
+        if robot.is_picked_up:
+            # indicate to re-localize and continue
+            # print("Picked up")
+            flag_odom_init = False
+            arrived = False
+            converged = False
+            convergence_score = 0
+            await robot.drive_wheels(0.0, 0,0)
+            # Have the robot act unhappy when we pick it up for kidnapping
+            await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabUnhappy).wait_for_completed()
+
+            while robot.is_picked_up:
+                await robot.drive_straight(distance_mm(0), speed_mmps(0)).wait_for_completed()
+            continue
+
+
         # use the flag_odom_init to indicate whether it is kidnapped
         if flag_odom_init == False:
             # Reset the last pose
@@ -162,9 +197,6 @@ async def run(robot: cozmo.robot.Robot):
             # Reset particle filter to a uniform distribution
             pf.particles = Particle.create_random(PARTICLE_COUNT, grid)
 
-            # TODO: Have the robot act unhappy when we pick it up for kidnapping
-            pass
-
             flag_odom_init = True
 
         # Get the current pose
@@ -172,36 +204,132 @@ async def run(robot: cozmo.robot.Robot):
 
         # Obtain odometry information
         odom = compute_odometry(curr_pose, cvt_inch=True)
-        last_pose = curr_pose
+        last_pose = robot.pose
 
         # Obtain list of currently seen markers and their poses
-        marker_list = await marker_processing(robot, camera_settings)
+        marker_list, camera_image = await marker_processing(robot, camera_settings, show_diagnostic_image=True)
 
         # Update the particle filter using the above information
+        # Not that the the first element in marker_list is the list
         (m_x, m_y, m_h, m_confident) = pf.update(odom, marker_list)
 
+        gui.show_particles(pf.particles)
+        gui.show_mean(m_x, m_y, m_h)
+        gui.show_camera_image(camera_image)
+        gui.updated.set()
+        # print("marker_list:", marker_list)
 
+        print(m_x, m_y, m_h, m_confident)
 
-        if m_confident == False:
+        # if converged once
+        if m_confident:
+            convergence_score += 3
+
+        # Converged many times means good estimate
+        if convergence_score > 30:
+            converged = True
+
+        # If has converged but diverge again
+        if converged and not m_confident:
+            convergence_score -= 2
+
+        # if diverge too much
+        if convergence_score < 0:
+            converged = False
+            convergence_score = 0
+
+        if not converged:
             # the localization has not converged -- global localization problem
+            # Have the robot actively look around (spin in place)
+            if ((time.time() - start) // 1) % 8 < 3 or len(marker_list) <= 0:
+                await robot.drive_wheels(15.0, -15,0)
+            elif len(marker_list) > 0:
+                if (marker_list[0][0] > 10):
+                    await robot.drive_wheels(20.0, 20,0)
+                if (marker_list[0][0] < 7):
+                    await robot.drive_wheels(-20.0, -20,0)
 
-            # Have the robot actively look around
-            pass
+            # if ((time.time() - start) // 1) % 8 == 0 or len(marker_list) <= 0:
+            #     await robot.turn_in_place(degrees(random.randint(-60, 60))).wait_for_completed()
+            # elif ((time.time() - start) // 1) % 2 == 0 and len(marker_list) > 0:
+            #     await robot.drive_straight(distance_mm(random.randint(-50, 50)), speed_mmps(50)).wait_for_completed()
+            # else:
+            #     pass
+
+            # if ((time.time() - start) // 2) % 3 == 0:
+            #     await robot.drive_wheels(30.0, 30,0)
+            # elif ((time.time() - start) // 2) % 3 == 1:
+            #     await robot.drive_wheels(-30.0, -30,0)
+            # elif ((time.time() - start) // 2) % 3 == 2:
+            #     await robot.drive_wheels(-30.0, 30,0)
 
         else:
+            # await robot.drive_wheels(0.0, 0,0)
+
+            # dx = goal[0] - m_x;
+            # dy = goal[1] - m_y;
+            # target_heading = atan2(dy, dx) * 180.0 / PI
+            #
+            # dh_deg = diff_heading_deg(target_heading, m_h)
+            # dist = grid_distance(m_x, m_y, goal[0], goal[1])
+            # dh_deg_2 = diff_heading_deg(goal[2], target_heading)
+            #
+            # await robot.turn_in_place(degrees(dh_deg)).wait_for_completed()
+            # await robot.drive_straight(distance_mm(dist * grid.scale), speed_mmps(50)).wait_for_completed()
+            # await robot.turn_in_place(degrees(dh_deg_2)).wait_for_completed()
+            #
+            # arrived = True
+
             # Detect whether the robot is in goal
-            if odom[0] - goal[0] <= 0.1 and odom[1] - goal[1] <= 0.1 and odom[2] - goal[2] <= 5:
+            diff_x = abs(m_x - goal[0])
+            diff_y = abs(m_y - goal[1])
+            diff_h = abs(m_h - goal[2])
+
+            # if arrived at the goal state (postion and heading)
+            if diff_x <= POSITION_TOL and diff_y <= POSITION_TOL and diff_h <= HEADING_TOL:
+                print("arrived at the goal state (postion and heading)")
                 # Have the robot play a happy animation, then stand still
-                pass
+                await robot.drive_wheels(0.0, 0,0)
+                await robot.play_anim_trigger(cozmo.anim.Triggers.CodeLabHappy).wait_for_completed()
+                arrived = True
                 continue
 
-            # the localization has converged -- position tracking problem
+            # If not at the goal position
+            elif diff_x > POSITION_TOL or diff_y > POSITION_TOL:
+                print("not at the goal position")
+                # the localization has converged -- position tracking problem
 
-            # Have the robot drive to the goal
-            grid_distance = (m_x, m_y, goal[0], goal[1])
+                # calculate the difference in position and heading
+                dx = goal[0] - m_x;
+                dy = goal[1] - m_y;
+                target_heading = atan2(dy, dx) * 180.0 / PI
+                dh_deg = diff_heading_deg(target_heading, m_h)
+                dist = grid_distance(m_x, m_y, goal[0], goal[1])
 
-            pass
+                # first adjust the heading towards the goal
+                angular_speed = min(20, abs(dh_deg / 3))
+                # angular_speed = 10
+                speed = 40
+                if dh_deg > HEADING_TOL:
+                    await robot.drive_wheels(-angular_speed, angular_speed)
+                elif dh_deg < - HEADING_TOL:
+                    await robot.drive_wheels(angular_speed, -angular_speed)
+                # then drive to the goal
+                else:
+                    await robot.drive_wheels(50.0, 50,0)
 
+            # if at the goal position, then adjust the heading
+            else:
+                await robot.drive_wheels(0.0, 0,0)
+                print("at the goal position, then adjust the heading")
+                dh_deg = diff_heading_deg(goal[2], m_h)
+                angular_speed = min(20, abs(dh_deg / 3))
+                if dh_deg > HEADING_TOL:
+                    await robot.drive_wheels(-angular_speed, angular_speed)
+                elif dh_deg < - HEADING_TOL:
+                    await robot.drive_wheels(angular_speed, -angular_speed)
+                else:
+                    await robot.drive_wheels(0.0, 0,0)
 
 
     ###################

@@ -6,9 +6,6 @@ import numpy as np
 np.random.seed(RANDOM_SEED)
 from itertools import product
 
-# constants
-RANDOM_PARTICLE_RATE = 0.03
-MISMATECH_PENALTY = 0.5
 
 def motion_update(particles, odom):
     """ Particle filter motion update
@@ -21,27 +18,15 @@ def motion_update(particles, odom):
         Returns: the list of particles represents belief \tilde{p}(x_{t} | u_{t})
                 after motion update
     """
-    # if the robot doesn't move, the particles shouldn't move either
-    if odom[0] == 0 and odom[1] == 0 and odom[2] == 0:
-        return particles
-    # The xyh of particles is in world frame
-    # The odom is in particle frame
-    # Transformation of x and y is needed
     motion_particles = []
-    for p in particles:
-        px, py, ph = p.xyh
-        # add noise in the particle frame
-        (nx, ny, dh) = add_odometry_noise(odom, ODOM_HEAD_SIGMA, ODOM_TRANS_SIGMA)
-        # from particle frame to world frame -> rotate back using the particle current heading angle
-        '''Note that the rotate_point() function is calculating the projection of a
-           vector in the frame that is rotated heading_deg CCW onto the original
-           frame. So we need to directly use ph here
-        '''
-        dx, dy = rotate_point(nx, ny, ph)
 
-        # the heading rotation is the same in both frames.
-        np = Particle(px + dx, py + dy, ph + dh)
-        motion_particles.append(np)
+    for particle in particles:
+        x, y, h = particle.xyh
+        dx, dy, dh = odom
+        c, d = rotate_point(dx, dy, h)
+        nx, ny, nh = add_odometry_noise((x+c, y+d, h+dh), heading_sigma=ODOM_HEAD_SIGMA, trans_sigma=ODOM_TRANS_SIGMA)
+        newParticle = Particle(nx, ny, nh%360)
+        motion_particles.append(newParticle)
 
     return motion_particles
 
@@ -61,7 +46,7 @@ def measurement_update(particles, measured_marker_list, grid):
 
                 * Note that the robot can only see markers which is in its camera field of view,
                 which is defined by ROBOT_CAMERA_FOV_DEG in setting.py
-                * Note that the robot can see mutliple markers at once, and may not see any one
+				* Note that the robot can see mutliple markers at once, and may not see any one
 
         grid -- grid world map, which contains the marker information,
                 see grid.py and CozGrid for definition
@@ -70,77 +55,56 @@ def measurement_update(particles, measured_marker_list, grid):
         Returns: the list of particles represents belief p(x_{t} | u_{t})
                 after measurement update
     """
-
-    # if not markers seen, no update
-    if len(measured_marker_list) <= 0:
-        return particles
-
-    # 2 lists are matched for (particle, weight) pairs
+    num_random_sample = 25
     measured_particles = []
-    weights = []
+    weight = []
 
-    for p in particles:
-        # particles within an obstacle or outside the map should have a weight of 0
-        if not grid.is_in(p.x, p.y) or not grid.is_free(p.x, p.y):
-            weights.append(0)
-            continue
+    if len(measured_marker_list) > 0:
+        for particle in particles:
+            x, y = particle.xy
+            if grid.is_in(x, y) and grid.is_free(x, y):
+                markers_visible_to_particle = particle.read_markers(grid)
+                markers_visible_to_robot = measured_marker_list.copy()
 
-        prob = 1.0
-        simulated_marker_list = p.read_markers(grid)
+                marker_pairs = []
+                while len(markers_visible_to_particle) > 0 and len(markers_visible_to_robot) > 0:
+                    all_pairs = product(markers_visible_to_particle, markers_visible_to_robot)
+                    pm, rm = min(all_pairs, key=lambda p: grid_distance(p[0][0], p[0][1], p[1][0], p[1][1]))
+                    marker_pairs.append((pm, rm))
+                    markers_visible_to_particle.remove(pm)
+                    markers_visible_to_robot.remove(rm)
 
-        '''if no markers from simulation but there exist markers in measurement
-           Then drop this particle
-        '''
-        if len(simulated_marker_list) <= 0:
-            # weights.append(1.0/PARTICLE_COUNT)
-            weights.append(0)
-            # weights.append(SPURIOUS_DETECTION_RATE ** (len(measured_marker_list)))
-            continue
+                prob = 1.
+                for pm, rm in marker_pairs:
+                    d = grid_distance(pm[0], pm[1], rm[0], rm[1])
+                    h = diff_heading_deg(pm[2], rm[2])
 
-        # pair the markers by distance
-        '''The matching of the pair should consider both distance and angle
-           thus directly calculate the probability when pairing and use the max one.
-        '''
-        for measured_marker in measured_marker_list:
-            max_prob = -0.1
-            best_pair = None
+                    exp1 = (d**2)/(2*MARKER_TRANS_SIGMA**2)
+                    exp2 = (h**2)/(2*MARKER_ROT_SIGMA**2)
 
-            # the particle detects less markers than the robot
-            if len(simulated_marker_list) <= 0:
-                break
+                    likelihood = math.exp(-(exp1+exp2))
+                    # The line is the key to this greedy algorithm
+                    # prob *= likelihood
+                    prob *= max(likelihood, DETECTION_FAILURE_RATE*SPURIOUS_DETECTION_RATE)
 
-            for simulated_marker in simulated_marker_list:
-                diff_dist = math.sqrt(measured_marker[0]**2 + measured_marker[1]**2) - math.sqrt(simulated_marker[0]**2 + simulated_marker[1]**2)
-                # diff_dist = grid_distance(measured_marker[0], measured_marker[1], simulated_marker[0], simulated_marker[1])
-                diff_angle = diff_heading_deg(measured_marker[2], simulated_marker[2])
-                this_prob = np.exp(-(diff_dist**2)/(2*MARKER_TRANS_SIGMA**2)
-                                   -(diff_angle**2)/(2*MARKER_ROT_SIGMA**2))
-                if this_prob > max_prob:
-                    max_prob = this_prob
-                    best_pair = simulated_marker
+                # In this case, likelihood is automatically 0, and max(0, DETECTION_FAILURE_RATE) = DETECTION_FAILURE_RATE
+                prob *= (DETECTION_FAILURE_RATE**len(markers_visible_to_particle))
+                # Probability for the extra robot observation to all be spurious
+                prob *= (SPURIOUS_DETECTION_RATE**len(markers_visible_to_robot))
+                weight.append(prob)
 
-            if best_pair != None:
-                simulated_marker_list.remove(best_pair)
+            else:
+                weight.append(0.)
+    else:
+        weight = [1.]*len(particles)
 
-            prob *= max_prob
+    norm = float(sum(weight))
 
-        # Add mismatech penalty
-        prob *= MISMATECH_PENALTY ** abs(len(simulated_marker_list) - len(measured_marker_list))
-
-        weights.append(prob)
-
-    # normalize weights
-    weights = np.divide(weights, np.sum(weights))
-
-    # resample *PARTICLE_COUNT* number of particles
-    measured_particles = np.random.choice(
-                            particles,
-                            size = PARTICLE_COUNT - int(PARTICLE_COUNT*RANDOM_PARTICLE_RATE),
-                            replace = True,
-                            p = weights)
-
-    # maintain some small percentage of random samples
-    measured_particles = np.ndarray.tolist(measured_particles) \
-                            + Particle.create_random(int(PARTICLE_COUNT*RANDOM_PARTICLE_RATE), grid)
+    if norm != 0:
+        weight = [i/norm for i in weight]
+        measured_particles = Particle.create_random(num_random_sample, grid)
+        measured_particles += np.random.choice(particles, PARTICLE_COUNT-num_random_sample, p=weight).tolist()
+    else:
+        measured_particles = Particle.create_random(PARTICLE_COUNT, grid)
 
     return measured_particles
