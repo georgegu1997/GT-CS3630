@@ -1,0 +1,4 @@
+{
+	"mapfile": ["maps/map1.json", "maps/map2.json", "maps/map3.json",
+              "maps/map4.json", "maps/map5.json", "maps/map6.json" ]
+}
