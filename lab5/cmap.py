@@ -1,5 +1,6 @@
 import json
 import threading
+import random
 
 from utils import *
 
@@ -192,7 +193,7 @@ class CozMap:
         self.updated.set()
         self.changes.extend(['node_paths', 'nodes', 'solved' if self._solved else None])
         self.lock.release()
-    
+
 
     def is_solved(self):
         """Return whether a solution has been found
@@ -217,12 +218,23 @@ class CozMap:
         ############################################################################
         # TODO: please enter your code below.
         path = self.get_path()
+
+        # Repeat n time (n = lenth of the path)
+        for _ in range(2 * len(path)):
+            # https://stackoverflow.com/questions/6482889/get-random-sample-from-list-while-maintaining-ordering-of-items
+            [node0, node1] = [ path[i] for i in sorted(random.sample(range(len(path)), 2)) ]
+            if self.is_collision_with_obstacles((node0, node1)):
+                continue
+            else:
+                node1.parent = node0
+
+        path = self.get_path()
         return path
 
     def get_path(self):
-        
+
         final_path = None
-        
+
         while final_path is None:
             path = []
             cur = None
@@ -235,7 +247,7 @@ class CozMap:
                     path.append(cur)
                     break
             final_path = path[::-1]
-        
+
         return final_path
 
     def is_solved(self):

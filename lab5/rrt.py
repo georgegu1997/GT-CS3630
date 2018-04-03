@@ -2,6 +2,7 @@ import cozmo
 import math
 import sys
 import time
+import random
 
 from cmap import *
 from gui import *
@@ -19,10 +20,24 @@ def step_from_to(node0, node1, limit=75):
     #    limit units at most
     # 3. Hint: please consider using np.arctan2 function to get vector angle
     # 4. Note: remember always return a Node object
-    return node1
+
+    distance = get_dist(node0, node1)
+
+    # If distance between two nodes is less than limit, return node1
+    if distance < limit:
+        return node1
+
+    # definite proportion and division point
+    # Ding Bi Fen Dian Gong Shi
+    new_node = Node((
+        node0.x * (1 - limit / distance) + node1.x * (limit / distance),
+        node0.y * (1 - limit / distance) + node1.y * (limit / distance)
+    ))
     ############################################################################
 
-       
+    return new_node
+
+
 def node_generator(cmap):
     rand_node = None
     ############################################################################
@@ -31,8 +46,25 @@ def node_generator(cmap):
     # 2. Use CozMap.is_inbound and CozMap.is_inside_obstacles to determine the
     #    legitimacy of the random node.
     # 3. Note: remember always return a Node object
-    pass
+
+    # with a 5% chance the goal location is returned
+    '''CANNOT RETURN THE GOAL ITSELF, OR INFINITE LOOP'''
+    if random.random() < 0.05:
+        goal = cmap.get_goals()[0]
+        return Node((goal.x, goal.y))
+
+    # Use CozMap.is_inbound and CozMap.is_inside_obstacles to
+    # determine the legitimacy of the random node.
+    while rand_node == None \
+            or cmap.is_inside_obstacles(rand_node) \
+            or (not cmap.is_inbound(rand_node)):
+        # Use CozMap width and height to get a uniformly distributed random node
+        rand_node = Node((
+            random.random() * cmap.width,
+            random.random() * cmap.height
+        ))
     ############################################################################
+
     return rand_node
 
 
@@ -48,12 +80,26 @@ def RRT(cmap, start):
         # 3. Limit the distance RRT can move
         # 4. Add one path from nearest node to random node
         #
-        rand_node = None
+
+        # Use CozMap.get_random_valid_node() to get a random node
+        rand_node = cmap.get_random_valid_node()
+
+        # Get the nearest node to the random node from RRT
         nearest_node = None
-        pass
+        nearest_dist = 1e7
+        for n in cmap.get_nodes():
+            if get_dist(rand_node, n) < nearest_dist:
+                nearest_node = n
+                nearest_dist = get_dist(rand_node, n)
+
+        # Limit the distance RRT can move
+        new_node = step_from_to(nearest_node, rand_node)
         ########################################################################
-        time.sleep(0.01)
-        cmap.add_path(nearest_node, rand_node)
+        time.sleep(0.01) # ????
+
+        # Add one path from nearest node to random node
+        cmap.add_path(nearest_node, new_node)
+
         if cmap.is_solved():
             break
 
@@ -82,7 +128,7 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
 def get_global_node(local_angle, local_origin, node):
     """Helper function: Transform the node's position (x,y) from local coordinate frame specified by local_origin and local_angle to global coordinate frame.
                         This function is used in detect_cube_and_update_cmap()
-        Arguments: 
+        Arguments:
         local_angle, local_origin -- specify local coordinate frame's origin in global coordinate frame
         local_angle -- a single angle value
         local_origin -- a Node object
@@ -97,9 +143,9 @@ def get_global_node(local_angle, local_origin, node):
 
 
 async def detect_cube_and_update_cmap(robot, marked, cozmo_pos):
-    """Helper function used to detect obstacle cubes and the goal cube. 
+    """Helper function used to detect obstacle cubes and the goal cube.
        1. When a valid goal cube is detected, old goals in cmap will be cleared and a new goal corresponding to the approach position of the cube will be added.
-       2. Approach position is used because we don't want the robot to drive to the center position of the goal cube. 
+       2. Approach position is used because we don't want the robot to drive to the center position of the goal cube.
        3. The center position of the goal cube will be returned as goal_center.
 
         Arguments:
@@ -115,15 +161,15 @@ async def detect_cube_and_update_cmap(robot, marked, cozmo_pos):
         goal_center -- when a new valid goal is added, the center of the goal cube will be returned
     """
     global cmap
-    
+
     # Padding of objects and the robot for C-Space
     cube_padding = 60.
     cozmo_padding = 100.
-    
+
     # Flags
     update_cmap = False
     goal_center = None
-    
+
     # Time for the robot to detect visible cubes
     time.sleep(1)
 
@@ -143,11 +189,11 @@ async def detect_cube_and_update_cmap(robot, marked, cozmo_pos):
 
         # The goal cube is defined as robot.world.light_cubes[cozmo.objects.LightCube1Id].object_id
         if robot.world.light_cubes[cozmo.objects.LightCube1Id].object_id == obj.object_id:
-            
+
             # Calculate the approach position of the object
             local_goal_pos = Node((0, -cozmo_padding))
             goal_pos = get_global_node(object_angle, object_pos, local_goal_pos)
-            
+
             # Check whether this goal location is valid
             if cmap.is_inside_obstacles(goal_pos) or (not cmap.is_inbound(goal_pos)):
                 print("The goal position is not valid. Please remove the goal cube and place in another position.")
@@ -211,7 +257,7 @@ if __name__ == '__main__':
         robot_thread = RobotThread()
         robot_thread.start()
     else:
-        cmap = CozMap("maps/map2.json", node_generator)    
+        cmap = CozMap("maps/map2.json", node_generator)
         sim = RRTThread()
         sim.start()
     visualizer = Visualizer(cmap)
