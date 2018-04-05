@@ -114,6 +114,16 @@ def RRT(cmap, start):
     else:
         print("Please try again :-(")
 
+def get_current_pose_on_cmap(robot):
+    start_x = 6*25.4
+    start_y = 10*25.4
+    current_x = robot.pose.position.x
+    current_y = robot.pose.position.y
+    # angle is not useful?
+    current_angle = robot.pose.rotation.angle_z
+
+    return Node((current_x + start_x, current_y + start_y))
+
 
 async def CozmoPlanning(robot: cozmo.robot.Robot):
     # Allows access to map and stopevent, which can be used to see if the GUI
@@ -126,85 +136,108 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
 
     # get the width and the height of the map
     map_width, map_height = cmap.get_size()
+    # print(map_width/25.4, map_height/25.4)
+
+    start_x = 6*25.4
+    start_y = 10*25.4
 
     # initialize starting global position of the robot
-    cozmo_pos = Node((6*25.4, 10*25.4))
+    cozmo_pos = Node((start_x, start_y))
+    cozmo_angle = 0.0
 
     # initialize marked
     marked = {}
 
     # set starting position of cmap
-    cmap.set_start(cozmo_pos)
+    # cmap.set_start(cozmo_pos)
 
-    goal_center = None
+    await robot.set_head_angle(cozmo.util.degrees(0)).wait_for_completed()
 
-    # set center of the arena to the goal
-    cmap.add_goal(Node(map_width/2, map_height/2))
-
-    # run RRT algorithm
-    RRT(cmap, cozmo_pos)
-
-    # counter
+    # A counter
     i = 0
 
-    # intialize path
-    path = cmap.get_path()
+    while True:
+        print("counter:",i)
 
-    while goal_center is None:
-        
         i += 1
 
-        if i == len(path):
-            # the robot is in the center of the map
+        # Make an observation every iteration
+        # Note that each iteration there can be a complete movement
+        # from current node to the next node.
+        cmap.set_start( get_current_pose_on_cmap(robot) )
+        update_cmap, goal_center = await detect_cube_and_update_cmap(robot, marked, get_current_pose_on_cmap(robot))
 
-            while goal_center is None:
-                # rotate in place
-                await robot.drive_wheels(20.0, -20.0)
+        # If new change to the map, clear the path and re-compute
+        if update_cmap:
+            print("new change to the map, clear the path and re-compute")
+            cmap.clear_solved()
 
-                # detect cube and update cmap
-                update_cmap, goal_center = await detect_cube_and_update_cmap(robot, marked, cozmo_pos)
+        # If not solved, try to solve the map
+        '''NOTE that we may need to kidnap the robot to set origin_id'''
+        if not cmap.is_solved():
+            print("not solved, try to solve the map")
+            # if cannot see the center and no goal has been observed
+            # go to the center and rotate
+            if goal_center == None and len(cmap.get_goals()) == 0:
+                print("cannot see the center and no goal has been observed go to the center and rotate")
+                next_pose = cozmo.util.Pose(
+                                map_width/2 - start_x,
+                                map_height/2 - start_y,
+                                0,
+                                angle_z = cozmo.util.Angle((i%8-4) * 45)
+                            )
 
-                if update_cmap == True:
-                    # reset cmap and run RRT again
-                    cmap.reset()
-                    cmap.set_start(cozmo_pos)
-                    RRT(cmap, cmap.get_start())
+                await robot.go_to_pose(next_pose).wait_for_completed()
+                # continue and make a new observation
+                continue
 
-                if goal_center is not None:
-                    break
+            # If we get a goal on cmap
+            # set the start and solve it.
+            if len(cmap.get_goals()) > 0:
+                print("we get a goal on cmap set the start and solve it.")
+                # current_x = robot.pose.position.x
+                # current_y = robot.pose.position.y
+                # # angle is not useful?
+                # current_angle = robot.pose.rotation.angle_z
 
-        # go to node: path[i]
-        robot.GoToPose()
+                cmap.set_start( get_current_pose_on_cmap(robot) )
 
-        # update cozmo_pos
-        cozmo_pos.x = robot.pose.position.x + 6*25.4
-        cozmo_pos.y = robot.pose.position.y + 10*25.4
+                RRT(cmap, cmap.get_start())
+                if cmap.is_solved():
+                    path = cmap.get_smooth_path()
+                    next_way_point_index = 1
+                    # print([(n.x, n.y) for n in path])
 
-        # detect cube and update cmap
-        update_cmap, goal_center = await detect_cube_and_update_cmap(robot, marked, cozmo_pos)
+        # If the path is known
+        # head to the goal
+        if cmap.is_solved():
+            print("the path is known head to the goal")
+            if next_way_point_index == len(path):
+                print("Arrived")
+                continue
 
-        if update_cmap == True:
-            # reset cmap and run RRT again
-            cmap.reset()
-            cmap.set_start(cozmo_pos)
-            RRT(cmap, cmap.get_start())
+            last_way_point = path[next_way_point_index - 1]
+            next_way_point = path[next_way_point_index]
+            end_angle = math.atan2(
+                            next_way_point.y - last_way_point.y,
+                            next_way_point.x - last_way_point.x
+                        )
 
-            # reset counter and path
-            i = 0
-            path = cmap.get_path()
+            # print(end_angle)
 
-        if goal_center is not None:
-            break
-
-    
-
-
-
-
+            next_pose = cozmo.util.Pose(
+                            next_way_point.x - start_x,
+                            next_way_point.y - start_y,
+                            0,
+                            angle_z = cozmo.util.Angle(end_angle)
+                        )
+            await robot.go_to_pose(next_pose).wait_for_completed()
+            next_way_point_index += 1
 
 
 def get_global_node(local_angle, local_origin, node):
-    """Helper function: Transform the node's position (x,y) from local coordinate frame specified by local_origin and local_angle to global coordinate frame.
+    """Helper function: Transform the node's position (x,y) from local coordinate frame specified
+                        by local_origin and local_angle to global coordinate frame.
                         This function is used in detect_cube_and_update_cmap()
         Arguments:
         local_angle, local_origin -- specify local coordinate frame's origin in global coordinate frame
