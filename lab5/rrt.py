@@ -124,6 +124,84 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
     # TODO: please enter your code below.
     # Description of function provided in instructions
 
+    # get the width and the height of the map
+    map_width, map_height = cmap.get_size()
+
+    # initialize starting global position of the robot
+    cozmo_pos = Node((6*25.4, 10*25.4))
+
+    # initialize marked
+    marked = {}
+
+    # set starting position of cmap
+    cmap.set_start(cozmo_pos)
+
+    goal_center = None
+
+    # set center of the arena to the goal
+    cmap.add_goal(Node(map_width/2, map_height/2))
+
+    # run RRT algorithm
+    RRT(cmap, cozmo_pos)
+
+    # counter
+    i = 0
+
+    # intialize path
+    path = cmap.get_path()
+
+    while goal_center is None:
+        
+        i += 1
+
+        if i == len(path):
+            # the robot is in the center of the map
+
+            while goal_center is None:
+                # rotate in place
+                await robot.drive_wheels(20.0, -20.0)
+
+                # detect cube and update cmap
+                update_cmap, goal_center = await detect_cube_and_update_cmap(robot, marked, cozmo_pos)
+
+                if update_cmap == True:
+                    # reset cmap and run RRT again
+                    cmap.reset()
+                    cmap.set_start(cozmo_pos)
+                    RRT(cmap, cmap.get_start())
+
+                if goal_center is not None:
+                    break
+
+        # go to node: path[i]
+        robot.GoToPose()
+
+        # update cozmo_pos
+        cozmo_pos.x = robot.pose.position.x + 6*25.4
+        cozmo_pos.y = robot.pose.position.y + 10*25.4
+
+        # detect cube and update cmap
+        update_cmap, goal_center = await detect_cube_and_update_cmap(robot, marked, cozmo_pos)
+
+        if update_cmap == True:
+            # reset cmap and run RRT again
+            cmap.reset()
+            cmap.set_start(cozmo_pos)
+            RRT(cmap, cmap.get_start())
+
+            # reset counter and path
+            i = 0
+            path = cmap.get_path()
+
+        if goal_center is not None:
+            break
+
+    
+
+
+
+
+
 
 def get_global_node(local_angle, local_origin, node):
     """Helper function: Transform the node's position (x,y) from local coordinate frame specified by local_origin and local_angle to global coordinate frame.
@@ -139,6 +217,15 @@ def get_global_node(local_angle, local_origin, node):
     ########################################################################
     # TODO: please enter your code below.
     new_node = None
+
+    x = node[0]
+    y = node[1]
+    c = math.cos(local_angle)
+    s = math.sin(local_angle)
+    xr = x * c + y * -s + local_origin[0]
+    yr = x * s + y * c + local_origin[1]
+
+    new_node = Node((xr, yr))
     return new_node
 
 
@@ -154,7 +241,7 @@ async def detect_cube_and_update_cmap(robot, marked, cozmo_pos):
                  also provides light cubes
         cozmo_pose -- provides the robot's pose in G_Arena
                  cozmo_pose is the robot's pose in the global coordinate we created (G_Arena)
-        marked -- a list of detected and tracked cubes (goal cube not valid will not be added to this list)
+        marked -- a dictionary of detected and tracked cubes (goal cube not valid will not be added to this list)
 
         Outputs:
         update_cmap -- when a new obstacle or a new valid goal is detected, update_cmap will set to True
@@ -201,18 +288,16 @@ async def detect_cube_and_update_cmap(robot, marked, cozmo_pos):
                 cmap.clear_goals()
                 cmap.add_goal(goal_pos)
                 goal_center = object_pos
-                marked[obj.object_id] = obj
-                update_cmap = True
-        else:
-            # Define an obstacle by its four corners in clockwise order
-            obstacle_nodes = []
-            obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((cube_padding, cube_padding))))
-            obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((cube_padding, -cube_padding))))
-            obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((-cube_padding, -cube_padding))))
-            obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((-cube_padding, cube_padding))))
-            cmap.add_obstacle(obstacle_nodes)
-            marked[obj.object_id] = obj
-            update_cmap = True
+
+        # Define an obstacle by its four corners in clockwise order
+        obstacle_nodes = []
+        obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((cube_padding, cube_padding))))
+        obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((cube_padding, -cube_padding))))
+        obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((-cube_padding, -cube_padding))))
+        obstacle_nodes.append(get_global_node(object_angle, object_pos, Node((-cube_padding, cube_padding))))
+        cmap.add_obstacle(obstacle_nodes)
+        marked[obj.object_id] = obj
+        update_cmap = True
 
     return update_cmap, goal_center
 
