@@ -191,13 +191,9 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
                 continue
 
             # If we get a goal on cmap
-            # set the start and solve it.
+            # set the start and solve RRT.
             if len(cmap.get_goals()) > 0:
                 print("we get a goal on cmap set the start and solve it.")
-                # current_x = robot.pose.position.x
-                # current_y = robot.pose.position.y
-                # # angle is not useful?
-                # current_angle = robot.pose.rotation.angle_z
 
                 cmap.set_start( get_current_pose_on_cmap(robot) )
 
@@ -206,7 +202,6 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
                     path = cmap.get_smooth_path()
                     # path = cmap.get_path()
                     next_way_point_index = 1
-                    # print([(n.x, n.y) for n in path])
 
         # If the path is known
         # head to the goal
@@ -222,8 +217,6 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
                             next_way_point.y - last_way_point.y,
                             next_way_point.x - last_way_point.x
                         )
-
-            # print(end_angle)
 
             next_pose = cozmo.util.Pose(
                             next_way_point.x - start_x,
