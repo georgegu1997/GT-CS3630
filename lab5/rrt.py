@@ -158,7 +158,6 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
 
     while True:
         print("counter:",i)
-
         i += 1
 
         # Make an observation every iteration
@@ -170,7 +169,7 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
         # If new change to the map, clear the path and re-compute
         if update_cmap:
             print("new change to the map, clear the path and re-compute")
-            cmap.clear_solved()
+            cmap.reset()
 
         # If not solved, try to solve the map
         '''NOTE that we may need to kidnap the robot to set origin_id'''
@@ -184,7 +183,7 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
                                 map_width/2 - start_x,
                                 map_height/2 - start_y,
                                 0,
-                                angle_z = cozmo.util.Angle((i%8-4) * 45)
+                                angle_z = cozmo.util.Angle((i%12-6) * 30)
                             )
 
                 await robot.go_to_pose(next_pose).wait_for_completed()
@@ -205,6 +204,7 @@ async def CozmoPlanning(robot: cozmo.robot.Robot):
                 RRT(cmap, cmap.get_start())
                 if cmap.is_solved():
                     path = cmap.get_smooth_path()
+                    # path = cmap.get_path()
                     next_way_point_index = 1
                     # print([(n.x, n.y) for n in path])
 
