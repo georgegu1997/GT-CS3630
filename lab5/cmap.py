@@ -1,3 +1,10 @@
+"""
+CS 3630 Lab5
+Group: 65
+Teammates: Qiao Gu, Guanzhi Wang
+"""
+
+
 import json
 import threading
 import random

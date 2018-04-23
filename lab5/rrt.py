@@ -1,3 +1,10 @@
+"""
+CS 3630 Lab5
+Group: 65
+Teammates: Qiao Gu, Guanzhi Wang
+"""
+
+
 import cozmo
 import math
 import sys
