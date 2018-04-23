@@ -57,6 +57,7 @@ class ParticleFilter:
 data = json.load(open('map_arena.json'))
 WEIGHT = data['width']
 HEIGHT = data['height']
+INCHE_IN_MILLIMETERS = data["scale"]
 
 IDLE = "none"
 DRONE = "drone"
@@ -109,8 +110,6 @@ def compute_odometry(curr_pose, cvt_inch=True):
 
     return (dx, dy, diff_heading_deg(curr_h, last_h))
 
-INCHE_IN_MILLIMETERS = 25.4
-
 def normalize_degree(degree):
     while degree > 180:
         degree -= 360
@@ -149,6 +148,27 @@ class CoordinateTransformer():
             (origin_pose[1] - self.map_to_origin_in_millimeters_degrees[1]) / INCHE_IN_MILLIMETERS,
             normalize_degree(origin_pose[2] - self.map_to_origin_in_millimeters_degrees[2])
         )
+
+class Localizer():
+
+    def __init__(self):
+        self.positions = np.array([])
+
+    def push(self, position):
+        if self.positions.size == 0:
+            self.positions = np.array(position)
+        else:
+            self.positions = np.vstack((self.positions, position))
+
+    def get(self):
+        return np.average(self.positions, axis=0)
+
+def rotate_point(x, y, heading_deg):
+    c = math.cos(math.radians(heading_deg))
+    s = math.sin(math.radians(heading_deg))
+    xr = x * c + y * -s
+    yr = x * s + y * c
+    return xr, yr
 
 def recognize_cube(cube_pose):
     x, y = cube_pose
@@ -238,9 +258,23 @@ async def run(robot: cozmo.robot.Robot):
         [ 0,  0,  1]
     ], dtype=np.float)
 
-    marker_location = {'drone': None, 'inspection': None, 'order': None, 'plane': None, 'truck': None, 'hands': None, 'place': None}
-    cube_target = {'A': 'drone', 'B': 'plane', 'C': 'inspection', 'D': 'place'}
+    marker_location = {
+        'drone': Localizer(),
+        'inspection': Localizer(),
+        'order': Localizer(),
+        'plane': Localizer(),
+        'truck': Localizer(),
+        'hands': Localizer(),
+        'place': Localizer()
+    }
+    cube_target = {
+        'A': 'drone',
+        'B': 'plane',
+        'C': 'inspection',
+        'D': 'place'
+    }
 
+    clf = loadClassifier()
 
     ###################
 
@@ -248,6 +282,7 @@ async def run(robot: cozmo.robot.Robot):
     converge_score = 0
 
     while True:
+        # lookaround = robot.start_behavior(cozmo.behavior.BehaviorTypes.LookAroundInPlace)
         if not converged:
             # Keep rotating
             await robot.drive_wheels(10.0, -10,0)
@@ -262,6 +297,31 @@ async def run(robot: cozmo.robot.Robot):
             # Obtain list of currently seen markers and their poses
             marker_list, camera_image, unwarped_image_list = await marker_processing(robot, camera_settings, show_diagnostic_image=True, return_unwarped_image=True)
 
+            if len(unwarped_image_list) > 0:
+                unwarped = unwarped_image_list[0]
+                related_position = marker_list[0]
+
+                cm = matplotlib.cm.ScalarMappable()
+                cm.set_cmap("viridis")
+                img = cm.to_rgba(unwarped)
+                img = (np.around(img*255))
+                image_arr = np.array([img], dtype=np.int16)
+
+                feature_arr = clf.extract_image_features(image_arr)
+
+                labels = clf.predict_labels(feature_arr)
+                print(labels)
+                robot_pose = (robot.pose.position.x, robot.pose.position.y, robot.pose.rotation.angle_z.radians)
+                related_to_robot = [i * INCHE_IN_MILLIMETERS for i in related_position[:2]]
+                # print(robot_pose)
+                # print(related_to_robot)
+                related_to_origin = (
+                    robot_pose[0] + related_to_robot[0] * math.cos(robot_pose[2]) - related_to_robot[1] * math.sin(robot_pose[2]),
+                    robot_pose[1] + related_to_robot[0] * math.sin(robot_pose[2]) + related_to_robot[1] * math.cos(robot_pose[2]),
+                )
+                # print(related_to_origin)
+                marker_location[labels[0]].push(related_to_origin)
+
             # Update the particle filter using the above information
             # Not that the the first element in marker_list is the list
             (m_x, m_y, m_h, m_confident) = pf.update(odom, marker_list)
@@ -272,7 +332,10 @@ async def run(robot: cozmo.robot.Robot):
             gui.updated.set()
 
             if m_confident:
+                print("converge score:", converge_score)
                 converge_score += 1
+            else:
+                converge_score = 0
 
             # Point of convergence
             if converge_score > 10:
@@ -280,13 +343,34 @@ async def run(robot: cozmo.robot.Robot):
                 origin_pose = (robot.pose.position.x, robot.pose.position.y, robot.pose.rotation.angle_z.degrees)
                 map_pose = (m_x, m_y, m_h)
                 ct = CoordinateTransformer(origin_pose, map_pose)
+                '''Add the obstacle'''
+                object_pose_map = (WEIGHT / 2 -0.5, HEIGHT / 2 - 0.5, 0)
+                object_pose_origin = ct.map_to_origin(object_pose_map)
+                fixed_object = await robot.world.create_custom_fixed_object(
+                    cozmo.util.Pose(object_pose_origin[0], object_pose_origin[1], 0, angle_z=degrees(object_pose_origin[2])),
+                    INCHE_IN_MILLIMETERS,
+                    INCHE_IN_MILLIMETERS,
+                    INCHE_IN_MILLIMETERS,
+                )
                 cubes = await robot.world.wait_until_observe_num_objects(num=3, object_type=cozmo.objects.LightCube, timeout=60, include_existing = True)
-                while len(cubes) < 3:
-                    await robot.drive_wheels(10.0, -10,0)
 
         else:
+            # await robot.drive_wheels(10.0, -10,0)
             await robot.drive_wheels(0, 0)
-            print(cubes)
+            print(len(cubes))
+            for cube in cubes:
+                map_pose = ct.origin_to_map((cube.pose.position.x, cube.pose.position.y, cube.pose.rotation.angle_z.degrees))
+                cube_label = recognize_cube((map_pose[0], map_pose[1]))
+                print('Type of cube: ', cube_label)
+                print("Picking up.")
+                await robot.pickup_object(cube, num_retries=5).wait_for_completed()
+                print("Going to the marker:", cube_target[cube_label])
+                cube_pose = marker_location[cube_target[cube_label]].get()
+                await robot.go_to_pose(cozmo.util.Pose(cube_pose[0], cube_pose[1], 0, angle_z=degrees(0)))\
+                           .wait_for_completed()
+                print("Dropping the cube.")
+                await robot.place_object_on_ground_here(cube).wait_for_completed()
+            break
 
     ###################
 
@@ -299,9 +383,7 @@ class CozmoThread(threading.Thread):
         cozmo.robot.Robot.drive_off_charger_on_connect = False  # Cozmo can stay on his charger
         cozmo.run_program(run, use_viewer=False)
 
-
-if __name__ == '__main__':
-
+def main():
     # cozmo thread
     cozmo_thread = CozmoThread()
     cozmo_thread.start()
@@ -310,3 +392,18 @@ if __name__ == '__main__':
     gui.show_particles(pf.particles)
     gui.show_mean(0, 0, 0)
     gui.start()
+
+def testLocalizer():
+    a = [1,2,3]
+    b = [4,5,6]
+    c = [4,5,6]
+    l = Localizer()
+    l.push(a)
+    l.push(b)
+    l.push(c)
+    print(l.get())
+
+
+if __name__ == '__main__':
+    main()
+    # testLocalizer()
