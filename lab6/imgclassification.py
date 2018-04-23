@@ -43,15 +43,16 @@ class ImageClassifier:
         ######## YOUR CODE HERE
 
         # covert the images to greyscale
-        print("#"*10, data.shape, data.type)
-        processed_image = color.rgb2gray(data)
+        # print("#"*10, data.shape, type(data))
+        processed_image = data
+        # processed_image = color.rgb2gray(data)
         # plt.subplot(321)
         # plt.imshow(processed_image[0])
         # plt.subplot(322)
         # plt.imshow(processed_image[1])
 
         # use Contrast Limited Adaptive Histogram Equalization (CLAHE).
-        print("#"*10, processed_image.shape, processed_image.type)
+        # print("#"*10, processed_image.shape, type(processed_image))
 
         for i in range(processed_image.shape[0]):
             processed_image[i] = filters.gaussian(processed_image[i], sigma = 1.5)
