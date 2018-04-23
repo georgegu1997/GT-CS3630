@@ -208,7 +208,7 @@ async def marker_processing(robot, camera_settings, show_diagnostic_image=False,
         annotator.annotate_markers(diag_image, markers, scale=2)
         annotated_image = diag_image
 
-    
+
 
     if return_unwarped_image == True:
       unwarped_image_list = [marker['unwarped_image'] for marker in markers]
@@ -283,7 +283,7 @@ async def run(robot: cozmo.robot.Robot):
     #         cubes = await robot.world.wait_until_observe_num_objects(num=3, object_type=cozmo.objects.LightCube, timeout=60, include_existing = True)
     #         break
 
-            
+
     # lookaround.stop()
     # print('Number of cubes:', len(cubes))
 
