@@ -293,6 +293,7 @@ async def run(robot: cozmo.robot.Robot):
 
             # Obtain odometry information
             odom = compute_odometry(curr_pose, cvt_inch=True)
+            last_pose = curr_pose
 
             # Obtain list of currently seen markers and their poses
             marker_list, camera_image, unwarped_image_list = await marker_processing(robot, camera_settings, show_diagnostic_image=True, return_unwarped_image=True)
@@ -301,36 +302,41 @@ async def run(robot: cozmo.robot.Robot):
                 unwarped = unwarped_image_list[0]
                 related_position = marker_list[0]
 
+                # Mapping from grey-scale (one channel)
+                # To RGBA (four channel) according to the matplotlib PNG conversion
                 cm = matplotlib.cm.ScalarMappable()
                 cm.set_cmap("viridis")
                 img = cm.to_rgba(unwarped)
                 img = (np.around(img*255))
                 image_arr = np.array([img], dtype=np.int16)
 
+                # Classify the image
                 feature_arr = clf.extract_image_features(image_arr)
-
                 labels = clf.predict_labels(feature_arr)
+
                 print(labels)
+
+                # calculate the position of the cube in the origin frame
+                # And store the result for further usage.
                 robot_pose = (robot.pose.position.x, robot.pose.position.y, robot.pose.rotation.angle_z.radians)
                 related_to_robot = [i * INCHE_IN_MILLIMETERS for i in related_position[:2]]
-                # print(robot_pose)
-                # print(related_to_robot)
                 related_to_origin = (
                     robot_pose[0] + related_to_robot[0] * math.cos(robot_pose[2]) - related_to_robot[1] * math.sin(robot_pose[2]),
                     robot_pose[1] + related_to_robot[0] * math.sin(robot_pose[2]) + related_to_robot[1] * math.cos(robot_pose[2]),
                 )
-                # print(related_to_origin)
                 marker_location[labels[0]].push(related_to_origin)
 
             # Update the particle filter using the above information
             # Not that the the first element in marker_list is the list
             (m_x, m_y, m_h, m_confident) = pf.update(odom, marker_list)
 
+            # Update the GUI
             gui.show_particles(pf.particles)
             gui.show_mean(m_x, m_y, m_h)
             gui.show_camera_image(camera_image)
             gui.updated.set()
 
+            # Trusted if only 10 continuous converge
             if m_confident:
                 print("converge score:", converge_score)
                 converge_score += 1
@@ -340,10 +346,13 @@ async def run(robot: cozmo.robot.Robot):
             # Point of convergence
             if converge_score > 10:
                 converged = True
+
+                # Initiate the Transformer between two frames
                 origin_pose = (robot.pose.position.x, robot.pose.position.y, robot.pose.rotation.angle_z.degrees)
                 map_pose = (m_x, m_y, m_h)
                 ct = CoordinateTransformer(origin_pose, map_pose)
-                '''Add the obstacle'''
+
+                # Add the obstacle
                 object_pose_map = (WEIGHT / 2 -0.5, HEIGHT / 2 - 0.5, 0)
                 object_pose_origin = ct.map_to_origin(object_pose_map)
                 fixed_object = await robot.world.create_custom_fixed_object(
@@ -351,25 +360,51 @@ async def run(robot: cozmo.robot.Robot):
                     INCHE_IN_MILLIMETERS,
                     INCHE_IN_MILLIMETERS,
                     INCHE_IN_MILLIMETERS,
+
                 )
+
+                # Wait until observe 3 distinct cubes
                 cubes = await robot.world.wait_until_observe_num_objects(num=3, object_type=cozmo.objects.LightCube, timeout=60, include_existing = True)
 
         else:
             # await robot.drive_wheels(10.0, -10,0)
             await robot.drive_wheels(0, 0)
             print(len(cubes))
-            for cube in cubes:
+            for i, cube in enumerate(cubes):
+                # Recognize the cube
                 map_pose = ct.origin_to_map((cube.pose.position.x, cube.pose.position.y, cube.pose.rotation.angle_z.degrees))
                 cube_label = recognize_cube((map_pose[0], map_pose[1]))
                 print('Type of cube: ', cube_label)
                 print("Picking up.")
-                await robot.pickup_object(cube, num_retries=5).wait_for_completed()
+
+                # Before picking up, go back to the center
+                # And adjust the angle towards the next cube
+                cube_pose = (cube.pose.position.x, cube.pose.position.y)
+                start_angle = math.atan2(
+                                    cube_pose[1],
+                                    cube_pose[0]
+                                ) / PI * 180.0
+                await robot.go_to_pose(cozmo.util.Pose(0, 0, 0, angle_z=degrees(start_angle)))\
+                           .wait_for_completed()
+
+                # Go to pick it up
+                await robot.pickup_object(cube, num_retries=100).wait_for_completed()
                 print("Going to the marker:", cube_target[cube_label])
-                cube_pose = marker_location[cube_target[cube_label]].get()
-                await robot.go_to_pose(cozmo.util.Pose(cube_pose[0], cube_pose[1], 0, angle_z=degrees(0)))\
+
+                # Adjust the heading at droping point
+                # angle is from the origin to the marker
+                marker_pose = marker_location[cube_target[cube_label]].get()
+                end_angle = math.atan2(
+                                marker_pose[1],
+                                marker_pose[0]
+                            ) / PI * 180.0
+
+                # 0.75 here is used to place the cube at somewhat distance from the marker
+                await robot.go_to_pose(cozmo.util.Pose(marker_pose[0]*0.75, marker_pose[1]*0.75, 0, angle_z=degrees(end_angle)))\
                            .wait_for_completed()
                 print("Dropping the cube.")
                 await robot.place_object_on_ground_here(cube).wait_for_completed()
+
             break
 
     ###################
@@ -407,3 +442,8 @@ def testLocalizer():
 if __name__ == '__main__':
     main()
     # testLocalizer()
+
+
+
+
+# pip3 install --user cozmo[3dviewer]
