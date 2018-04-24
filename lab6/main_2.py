@@ -129,25 +129,58 @@ class CoordinateTransformer():
         origin_pose: (x, y, h) from robot.pose in millimeters and degree
         map_pose: (x, y, h) from particle filter in inches and degree
         '''
-        self.map_to_origin_in_millimeters_degrees = (
-            origin_pose[0] - map_pose[0] * INCHE_IN_MILLIMETERS,
-            origin_pose[1] - map_pose[1] * INCHE_IN_MILLIMETERS,
-            normalize_degree(origin_pose[2] - map_pose[2])
-        )
+        # self.map_to_origin_in_millimeters_degrees = (
+        #     origin_pose[0] - map_pose[0] * INCHE_IN_MILLIMETERS,
+        #     origin_pose[1] - map_pose[1] * INCHE_IN_MILLIMETERS,
+        #     normalize_degree(origin_pose[2] - map_pose[2])
+        # )
+        self.T = np.zeros((3,3))
+        self.dh = normalize_degree(map_pose[2] - origin_pose[2])
+        self.T[0,0] = math.cos(self.dh / 180 * PI)
+        self.T[0,1] = - math.sin(self.dh / 180 * PI)
+        self.T[1,0] = math.sin(self.dh / 180 * PI)
+        self.T[1,1] = math.cos(self.dh / 180 * PI)
+        self.T[2,2] = 1
+
+        map_pose_homo = np.array([[map_pose[0]], [map_pose[1]], [1]])
+        origin_pose_homo = np.array([[origin_pose[0]], [origin_pose[1]], [1]])
+        print("map_pose_homo", map_pose_homo)
+        print("origin_pose_homo", origin_pose_homo)
+
+        t = map_pose_homo * INCHE_IN_MILLIMETERS - self.T.dot(origin_pose_homo) 
+        print("t", t)
+
+        self.T[:,2] = t.reshape((-1,))
+        self.T[2,2] = 1
+        print(self.T)
+
 
     def map_to_origin(self, map_pose):
+        homo_p_map = np.ones((3,1))
+        homo_p_map[0,0] = map_pose[0] * INCHE_IN_MILLIMETERS
+        homo_p_map[1,0] = map_pose[1] * INCHE_IN_MILLIMETERS
+        homo_p_origin = np.linalg.inv(self.T).dot(homo_p_map)
         return (
-            map_pose[0] * INCHE_IN_MILLIMETERS + self.map_to_origin_in_millimeters_degrees[0],
-            map_pose[1] * INCHE_IN_MILLIMETERS + self.map_to_origin_in_millimeters_degrees[1],
-            normalize_degree(map_pose[2] + self.map_to_origin_in_millimeters_degrees[2])
+            homo_p_origin[0,0],
+            homo_p_origin[1,0],
+            normalize_degree(map_pose[2] - self.dh)
         )
 
     def origin_to_map(self, origin_pose):
-        return (
-            (origin_pose[0] - self.map_to_origin_in_millimeters_degrees[0]) / INCHE_IN_MILLIMETERS,
-            (origin_pose[1] - self.map_to_origin_in_millimeters_degrees[1]) / INCHE_IN_MILLIMETERS,
-            normalize_degree(origin_pose[2] - self.map_to_origin_in_millimeters_degrees[2])
+        print("origin_pose:",origin_pose)
+        homo_p_origin = np.ones((3,1))
+        homo_p_origin[0,0] = origin_pose[0]
+        homo_p_origin[1,0] = origin_pose[1]
+        print("T:",self.T)
+        homo_p_map = self.T.dot(homo_p_origin)
+        map_pose = (
+            homo_p_map[0,0] / INCHE_IN_MILLIMETERS,
+            homo_p_map[1,0] / INCHE_IN_MILLIMETERS,
+            normalize_degree(origin_pose[2] + self.dh)
         )
+        print("map_pose:",map_pose)
+        
+        return map_pose
 
 class Localizer():
 
@@ -280,6 +313,7 @@ async def run(robot: cozmo.robot.Robot):
 
     converged = False
     converge_score = 0
+    cubes_done = []
 
     while True:
         # lookaround = robot.start_behavior(cozmo.behavior.BehaviorTypes.LookAroundInPlace)
@@ -350,16 +384,19 @@ async def run(robot: cozmo.robot.Robot):
                 # Initiate the Transformer between two frames
                 origin_pose = (robot.pose.position.x, robot.pose.position.y, robot.pose.rotation.angle_z.degrees)
                 map_pose = (m_x, m_y, m_h)
+                print("origin_pose:", origin_pose)
+                print("map_pose:", map_pose)
                 ct = CoordinateTransformer(origin_pose, map_pose)
+                print("calculated map_pose:", ct.origin_to_map(origin_pose))
 
                 # Add the obstacle
                 object_pose_map = (WEIGHT / 2 -0.5, HEIGHT / 2 - 0.5, 0)
                 object_pose_origin = ct.map_to_origin(object_pose_map)
                 fixed_object = await robot.world.create_custom_fixed_object(
                     cozmo.util.Pose(object_pose_origin[0], object_pose_origin[1], 0, angle_z=degrees(object_pose_origin[2])),
-                    INCHE_IN_MILLIMETERS,
-                    INCHE_IN_MILLIMETERS,
-                    INCHE_IN_MILLIMETERS,
+                    INCHE_IN_MILLIMETERS*3,
+                    INCHE_IN_MILLIMETERS*3,
+                    INCHE_IN_MILLIMETERS*3,
 
                 )
 
@@ -371,8 +408,13 @@ async def run(robot: cozmo.robot.Robot):
             await robot.drive_wheels(0, 0)
             print(len(cubes))
             for i, cube in enumerate(cubes):
+
+                # if cube.object_id in cubes_done:
+                #     continue
+
                 # Recognize the cube
                 map_pose = ct.origin_to_map((cube.pose.position.x, cube.pose.position.y, cube.pose.rotation.angle_z.degrees))
+                print('Map pose:', map_pose)
                 cube_label = recognize_cube((map_pose[0], map_pose[1]))
                 print('Type of cube: ', cube_label)
                 print("Picking up.")
@@ -394,18 +436,42 @@ async def run(robot: cozmo.robot.Robot):
                 # Adjust the heading at droping point
                 # angle is from the origin to the marker
                 marker_pose = marker_location[cube_target[cube_label]].get()
+                sq_avg = (marker_pose[0] ** 2 + marker_pose[1] ** 2) ** (1/2)
+                marker_pose[0] = marker_pose[0] - (marker_pose[0]/sq_avg) * 85
+                marker_pose[1] = marker_pose[1] - (marker_pose[1]/sq_avg) * 85
+
+
                 end_angle = math.atan2(
                                 marker_pose[1],
                                 marker_pose[0]
                             ) / PI * 180.0
 
                 # 0.75 here is used to place the cube at somewhat distance from the marker
-                await robot.go_to_pose(cozmo.util.Pose(marker_pose[0]*0.75, marker_pose[1]*0.75, 0, angle_z=degrees(end_angle)))\
+                await robot.go_to_pose(cozmo.util.Pose(marker_pose[0], marker_pose[1], 0, angle_z=degrees(end_angle)))\
                            .wait_for_completed()
                 print("Dropping the cube.")
                 await robot.place_object_on_ground_here(cube).wait_for_completed()
-
             break
+
+
+                # await robot.go_to_pose(cozmo.util.Pose(0,0,0,angle_z=degrees(0))).wait_for_completed()
+            #     cubes_done.append(cube.object_id)
+            #     break
+
+            # converged = False
+            # converge_score = 0
+            # # Reset the last pose
+            # last_pose = cozmo.util.Pose(0,0,0,angle_z=cozmo.util.Angle(degrees=0))
+
+            # # Reset particle filter to a uniform distribution
+            # pf.particles = Particle.create_random(PARTICLE_COUNT, grid)
+
+
+
+            # if len(cubes_done) >= 3:
+            #     break
+
+
 
     ###################
 
@@ -417,6 +483,7 @@ class CozmoThread(threading.Thread):
     def run(self):
         cozmo.robot.Robot.drive_off_charger_on_connect = False  # Cozmo can stay on his charger
         cozmo.run_program(run, use_viewer=False)
+        # cozmo.run_program(run, use_3d_viewer=True)
 
 def main():
     # cozmo thread
